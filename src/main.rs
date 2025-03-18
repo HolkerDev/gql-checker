@@ -12,6 +12,9 @@ use tree_sitter::{Parser as TreeSitterParser, Query, QueryCursor};
 use tree_sitter_kotlin::language;
 use walkdir::WalkDir;
 
+mod schema_parser;
+use schema_parser::SchemaParser;
+
 #[derive(Parser)]
 struct CliParams {
     #[arg(long, default_value = "src/main/resources/graphql")]

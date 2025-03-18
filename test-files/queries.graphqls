@@ -1,5 +1,6 @@
 type Query {
     employee(id: ID!): Employee!
+    searchEmployee(name: String!, age: Int, createdAt: Timestamp): [Employee!]!
 }
 
 type Employee {
