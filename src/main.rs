@@ -6,14 +6,13 @@ use std::{
 use anyhow::{Context, Result};
 use clap::Parser;
 use colored::*;
-use graphql_parser::schema::{Definition, Document, TypeDefinition, parse_schema};
 use regex::Regex;
+use schema_parser::SchemaParser;
 use tree_sitter::{Parser as TreeSitterParser, Query, QueryCursor};
 use tree_sitter_kotlin::language;
 use walkdir::WalkDir;
 
 mod schema_parser;
-use schema_parser::SchemaParser;
 
 #[derive(Parser)]
 struct CliParams {
@@ -26,7 +25,7 @@ struct CliParams {
 }
 
 enum MismatchType {
-    MissingResolver(String), // accepts query name
+    MissingQueryResolver(String), // accepts query name
 }
 
 fn main() -> Result<()> {
@@ -46,17 +45,10 @@ fn main() -> Result<()> {
     println!("📁 Schema dir: {}", schema_dir.display().to_string().cyan());
     println!("📂 Source dir: {}", source_dir.display().to_string().cyan());
 
-    println!("{}", "📝 Reading GraphQL schema...".yellow());
-    let query_file = schema_dir.join("queries.graphqls");
-    let query_content =
-        std::fs::read_to_string(query_file).context("❌ Failed to read query file")?;
+    let schema_parser = SchemaParser::new(schema_dir.clone())?;
 
     println!("{}", "🔍 Parsing schema...".yellow());
-    let schema: Document<String> =
-        parse_schema(&query_content).context("❌ Failed to parse schema")?;
-
-    println!("{}", "🔎 Extracting query names...".yellow());
-    let query_names = get_query_names(&schema);
+    let query_names = schema_parser.get_query_names();
 
     println!("{}", "⚙️  Parsing resolvers...".yellow());
     let resolvers = get_resolver_names(&source_dir)?;
@@ -66,7 +58,7 @@ fn main() -> Result<()> {
 
     query_names.iter().for_each(|query_name| {
         if !resolvers.contains(&query_name) {
-            mismatches.push(MismatchType::MissingResolver(query_name.clone()));
+            mismatches.push(MismatchType::MissingQueryResolver(query_name.clone()));
         }
     });
 
@@ -83,7 +75,7 @@ fn main() -> Result<()> {
         println!("{}", "⚠️  Found missing resolvers:".bright_red().bold());
 
         mismatches.iter().for_each(|mismatch| match mismatch {
-            MismatchType::MissingResolver(query_name) => {
+            MismatchType::MissingQueryResolver(query_name) => {
                 println!(
                     "   ❌ Query {} doesn't have a proper resolver",
                     query_name.bright_red().underline()
@@ -97,27 +89,6 @@ fn main() -> Result<()> {
             mismatches.len()
         ))
     }
-}
-
-const QUERY_NAME: &str = "Query";
-
-// Get all query names from the schema
-fn get_query_names(schema: &Document<String>) -> Vec<String> {
-    let mut query_names = Vec::new();
-
-    schema
-        .definitions
-        .iter()
-        .filter_map(|def| match def {
-            Definition::TypeDefinition(TypeDefinition::Object(obj)) if obj.name == QUERY_NAME => {
-                Some(obj)
-            }
-            _ => None,
-        })
-        .flat_map(|obj| obj.fields.iter().map(|field| field.name.clone()))
-        .for_each(|name| query_names.push(name));
-
-    query_names
 }
 
 pub fn get_resolver_names(source_dir: &Path) -> Result<Vec<String>> {

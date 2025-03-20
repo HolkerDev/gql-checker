@@ -1,9 +1,10 @@
+use anyhow::Result;
 use graphql_parser::{
     parse_schema,
-    schema::{Definition, Document, TypeDefinition},
+    schema::{Definition, TypeDefinition},
 };
-use anyhow::Result;
 use std::{ops::Not, path::PathBuf};
+use walkdir::WalkDir;
 
 const QUERY_NAME: &str = "Query";
 
@@ -19,7 +20,7 @@ pub struct Query {
     pub arguments: Vec<Argument>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Argument {
     pub name: String,
     pub value_type: String,
@@ -28,60 +29,95 @@ pub struct Argument {
 
 impl SchemaParser {
     pub fn new(schema_dir: PathBuf) -> Result<Self> {
-        let content = std::fs::read_to_string(schema_dir.join("queries.graphqls"))?;
-        let schema = parse_schema::<String>(&content)?;
-        
-        let custom_scalars: Vec<String> = schema.definitions.iter()
-            .filter_map(|def| {
-                if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar)) = def {
-                    Some(scalar.name.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let schema_dir = schema_dir.clone();
+        let mut custom_scalars: Vec<String> = Vec::new();
+        let mut schema_queries: Vec<Query> = Vec::new();
 
-        let queries: Vec<Query> = schema.definitions.iter()
-            .filter_map(|def| {
-                let obj = match def {
-                    Definition::TypeDefinition(TypeDefinition::Object(obj)) => obj,
-                    _ => return None,
-                };
+        for entry in WalkDir::new(schema_dir.clone())
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            // skip directories, because I assume all files are not nested
+            if entry.path().is_file().not() {
+                continue;
+            }
 
-                if obj.name != QUERY_NAME {
-                    return None;
-                }
+            let content = std::fs::read_to_string(entry.path())?;
 
-                Some(&obj.fields)
-            })
-            .flat_map(|fields| {
-                fields.iter().map(|field| {
-                    let arguments = field.arguments.iter()
-                        .filter_map(|arg| {
-                            let is_nullable = !arg.value_type.to_string().contains("!");
-                            let value_type = arg.value_type.to_string().replace("!", "");
-                            
-                            if custom_scalars.contains(&value_type) {
-                                None
-                            } else {
-                                Some(Argument {
-                                    name: arg.name.clone(),
-                                    value_type,
-                                    is_nullable,
-                                })
-                            }
-                        })
-                        .collect();
+            let schema = parse_schema::<String>(&content)?;
 
-                    Query {
-                        name: field.name.clone(),
-                        arguments,
+            let scalars = schema
+                .definitions
+                .iter()
+                .filter_map(|def| {
+                    if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar)) = def {
+                        Some(scalar.name.clone())
+                    } else {
+                        None
                     }
                 })
-            })
-            .collect();
-        
-        Ok(Self { queries, custom_scalars })
+                .collect::<Vec<String>>();
+            custom_scalars.extend(scalars);
+
+            let queries = schema
+                .definitions
+                .iter()
+                .filter_map(|def| {
+                    let obj = match def {
+                        Definition::TypeDefinition(TypeDefinition::Object(obj)) => obj,
+                        _ => return None,
+                    };
+
+                    if obj.name != QUERY_NAME {
+                        return None;
+                    }
+
+                    Some(&obj.fields)
+                })
+                .flat_map(|fields| {
+                    fields.iter().map(|field| {
+                        let arguments = field
+                            .arguments
+                            .iter()
+                            .filter_map(|arg| {
+                                let is_nullable = !arg.value_type.to_string().contains("!");
+                                let value_type = arg.value_type.to_string().replace("!", "");
+
+                                if custom_scalars.contains(&value_type) {
+                                    None
+                                } else {
+                                    Some(Argument {
+                                        name: arg.name.clone(),
+                                        value_type,
+                                        is_nullable,
+                                    })
+                                }
+                            })
+                            .collect();
+
+                        Query {
+                            name: field.name.clone(),
+                            arguments,
+                        }
+                    })
+                })
+                .collect::<Vec<Query>>();
+            schema_queries.extend(queries);
+        }
+
+        for query in &mut schema_queries {
+            query.arguments = query
+                .arguments
+                .iter()
+                .filter(|arg| custom_scalars.contains(&arg.value_type).not())
+                .cloned()
+                .collect();
+        }
+
+        Ok(Self {
+            queries: schema_queries,
+            custom_scalars,
+        })
     }
 
     pub fn get_query_names(&self) -> Vec<String> {
