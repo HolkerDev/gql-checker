@@ -1,7 +1,7 @@
 use anyhow::Result;
 use graphql_parser::{
     parse_schema,
-    schema::{Definition, TypeDefinition},
+    schema::{Definition, Document, TypeDefinition},
 };
 use std::{ops::Not, path::PathBuf};
 use walkdir::WalkDir;
@@ -46,62 +46,10 @@ impl SchemaParser {
 
             let schema = parse_schema::<String>(&content)?;
 
-            let scalars = schema
-                .definitions
-                .iter()
-                .filter_map(|def| {
-                    if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar)) = def {
-                        Some(scalar.name.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<String>>();
+            let scalars = Self::extract_custom_scalars(&schema);
             custom_scalars.extend(scalars);
 
-            let queries = schema
-                .definitions
-                .iter()
-                .filter_map(|def| {
-                    let obj = match def {
-                        Definition::TypeDefinition(TypeDefinition::Object(obj)) => obj,
-                        _ => return None,
-                    };
-
-                    if obj.name != QUERY_NAME {
-                        return None;
-                    }
-
-                    Some(&obj.fields)
-                })
-                .flat_map(|fields| {
-                    fields.iter().map(|field| {
-                        let arguments = field
-                            .arguments
-                            .iter()
-                            .filter_map(|arg| {
-                                let is_nullable = !arg.value_type.to_string().contains("!");
-                                let value_type = arg.value_type.to_string().replace("!", "");
-
-                                if custom_scalars.contains(&value_type) {
-                                    None
-                                } else {
-                                    Some(Argument {
-                                        name: arg.name.clone(),
-                                        value_type,
-                                        is_nullable,
-                                    })
-                                }
-                            })
-                            .collect();
-
-                        Query {
-                            name: field.name.clone(),
-                            arguments,
-                        }
-                    })
-                })
-                .collect::<Vec<Query>>();
+            let queries = Self::extract_queries(&schema);
             schema_queries.extend(queries);
         }
 
@@ -118,6 +66,61 @@ impl SchemaParser {
             queries: schema_queries,
             custom_scalars,
         })
+    }
+
+    fn extract_custom_scalars(schema: &Document<String>) -> Vec<String> {
+        schema
+            .definitions
+            .iter()
+            .filter_map(|def| {
+                if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar)) = def {
+                    Some(scalar.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>()
+    }
+
+    fn extract_queries(schema: &Document<String>) -> Vec<Query> {
+        schema
+            .definitions
+            .iter()
+            .filter_map(|def| {
+                let obj = match def {
+                    Definition::TypeDefinition(TypeDefinition::Object(obj)) => obj,
+                    _ => return None,
+                };
+
+                if obj.name != QUERY_NAME {
+                    return None;
+                }
+
+                Some(&obj.fields)
+            })
+            .flat_map(|fields| {
+                fields.iter().map(|field| {
+                    let arguments = field
+                        .arguments
+                        .iter()
+                        .filter_map(|arg| {
+                            let is_nullable = !arg.value_type.to_string().contains("!");
+                            let value_type = arg.value_type.to_string().replace("!", "");
+                            Some(Argument {
+                                name: arg.name.clone(),
+                                value_type,
+                                is_nullable,
+                            })
+                        })
+                        .collect();
+
+                    Query {
+                        name: field.name.clone(),
+                        arguments,
+                    }
+                })
+            })
+            .collect::<Vec<Query>>()
     }
 
     pub fn get_query_names(&self) -> Vec<String> {
