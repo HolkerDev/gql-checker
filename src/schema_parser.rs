@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use graphql_parser::{
     parse_schema,
     schema::{Definition, Document, TypeDefinition},
@@ -6,58 +6,102 @@ use graphql_parser::{
 use std::{ops::Not, path::PathBuf};
 use walkdir::WalkDir;
 
+/// Custom error types for schema parsing operations
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaParserError {
+    #[error("Failed to read schema file: {0}")]
+    FileReadError(#[from] std::io::Error),
+    #[error("Failed to parse GraphQL schema: {0}")]
+    ParseError(String),
+    #[error("No schema files found in directory: {0}")]
+    NoSchemaFiles(PathBuf),
+    #[error("Invalid schema directory: {0}")]
+    InvalidSchemaDir(String),
+}
+
+/// The name of the root Query type in GraphQL schema
 const QUERY_NAME: &str = "Query";
 
+/// A parser for GraphQL schema files that extracts queries and custom scalars
 #[derive(Debug)]
 pub struct SchemaParser {
     queries: Vec<Query>,
     custom_scalars: Vec<String>,
 }
 
+/// Represents a GraphQL query with its name and arguments
 #[derive(Debug)]
 pub struct Query {
+    /// The name of the query
     pub name: String,
+    /// The arguments accepted by the query
     pub arguments: Vec<Argument>,
 }
 
+/// Represents a GraphQL argument with its name, type, and nullability
 #[derive(Clone, Debug)]
 pub struct Argument {
+    /// The name of the argument
     pub name: String,
+    /// The GraphQL type of the argument
     pub value_type: String,
+    /// Whether the argument can be null
     pub is_nullable: bool,
 }
 
 impl SchemaParser {
-    pub fn new(schema_dir: PathBuf) -> Result<Self> {
-        let schema_dir = schema_dir.clone();
+    /// Creates a new SchemaParser by reading and parsing GraphQL schema files from the given directory
+    ///
+    /// # Arguments
+    /// * `schema_dir` - Path to the directory containing GraphQL schema files
+    ///
+    /// # Returns
+    /// * `anyhow::Result<Self>` - The constructed SchemaParser or an error if parsing fails
+    pub fn new(schema_dir: PathBuf) -> anyhow::Result<Self, SchemaParserError> {
+        if !schema_dir.exists() {
+            return Err(SchemaParserError::InvalidSchemaDir(
+                "Schema directory does not exist".to_string(),
+            )
+            .into());
+        }
+
+        if !schema_dir.is_dir() {
+            return Err(SchemaParserError::InvalidSchemaDir(
+                "Schema path is not a directory".to_string(),
+            )
+            .into());
+        }
+
         let mut custom_scalars: Vec<String> = Vec::new();
         let mut schema_queries: Vec<Query> = Vec::new();
+        let mut found_schema_files = false;
 
-        for entry in WalkDir::new(schema_dir.clone())
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            // skip directories, because I assume all files are not nested
+        for entry in WalkDir::new(&schema_dir).into_iter().filter_map(|e| e.ok()) {
             if entry.path().is_file().not() {
                 continue;
             }
 
-            let content = std::fs::read_to_string(entry.path())?;
+            found_schema_files = true;
+            let content = std::fs::read_to_string(entry.path())
+                .map_err(|e| SchemaParserError::FileReadError(e))?;
 
-            let schema = parse_schema::<String>(&content)?;
+            let schema = parse_schema::<String>(&content)
+                .map_err(|e| SchemaParserError::ParseError(e.to_string()))?;
 
-            let scalars = Self::extract_custom_scalars(&schema);
-            custom_scalars.extend(scalars);
-
-            let queries = Self::extract_queries(&schema);
-            schema_queries.extend(queries);
+            custom_scalars.extend(Self::extract_custom_scalars(&schema));
+            schema_queries.extend(Self::extract_queries(&schema));
         }
 
+        if !found_schema_files {
+            return Err(SchemaParserError::NoSchemaFiles(schema_dir).into());
+        }
+
+        // Filter out custom scalar arguments from queries
         for query in &mut schema_queries {
             query.arguments = query
                 .arguments
                 .iter()
-                .filter(|arg| custom_scalars.contains(&arg.value_type).not())
+                .filter(|arg| !custom_scalars.contains(&arg.value_type))
                 .cloned()
                 .collect();
         }
@@ -66,6 +110,16 @@ impl SchemaParser {
             queries: schema_queries,
             custom_scalars,
         })
+    }
+
+    /// Returns a list of all query names found in the schema
+    pub fn get_query_names(&self) -> Vec<String> {
+        self.queries.iter().map(|q| q.name.clone()).collect()
+    }
+
+    /// Returns all queries found in the schema
+    pub fn get_queries(&self) -> &[Query] {
+        &self.queries
     }
 
     fn extract_custom_scalars(schema: &Document<String>) -> Vec<String> {
@@ -79,7 +133,7 @@ impl SchemaParser {
                     None
                 }
             })
-            .collect::<Vec<String>>()
+            .collect()
     }
 
     fn extract_queries(schema: &Document<String>) -> Vec<Query> {
@@ -104,8 +158,8 @@ impl SchemaParser {
                         .arguments
                         .iter()
                         .filter_map(|arg| {
-                            let is_nullable = !arg.value_type.to_string().contains("!");
-                            let value_type = arg.value_type.to_string().replace("!", "");
+                            let is_nullable = !arg.value_type.to_string().contains('!');
+                            let value_type = arg.value_type.to_string().replace('!', "");
                             Some(Argument {
                                 name: arg.name.clone(),
                                 value_type,
@@ -120,15 +174,7 @@ impl SchemaParser {
                     }
                 })
             })
-            .collect::<Vec<Query>>()
-    }
-
-    pub fn get_query_names(&self) -> Vec<String> {
-        self.queries.iter().map(|q| q.name.clone()).collect()
-    }
-
-    pub fn get_queries(&self) -> &Vec<Query> {
-        &self.queries
+            .collect()
     }
 }
 

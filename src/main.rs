@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::*;
 use regex::Regex;
@@ -84,10 +84,7 @@ fn main() -> Result<()> {
         });
 
         println!("{}", "🏁 Validation failed!".bright_red().bold());
-        Err(anyhow::anyhow!(
-            "Found {} mismatches",
-            mismatches.len()
-        ))
+        Err(anyhow!("Found {} mismatches", mismatches.len()))
     }
 }
 
