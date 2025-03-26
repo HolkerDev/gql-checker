@@ -12,6 +12,7 @@ use tree_sitter::{Parser as TreeSitterParser, Query, QueryCursor};
 use tree_sitter_kotlin::language;
 use walkdir::WalkDir;
 
+mod kotlin_parser;
 mod schema_parser;
 
 #[derive(Parser)]
