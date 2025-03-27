@@ -1,6 +1,5 @@
-use std::{fs, path::Path};
+use std::{fs, net::ToSocketAddrs, path::Path};
 
-use regex::Regex;
 use tree_sitter::{Parser as TreeSitterParser, Query, QueryCursor};
 use tree_sitter_kotlin::language;
 use walkdir::WalkDir;
@@ -18,6 +17,7 @@ struct File {
 
 struct Class {
     fields: Vec<Field>,
+    name: String,
 }
 
 struct Field {
@@ -45,6 +45,11 @@ impl KotlinParser {
                 continue;
             }
 
+            let mut file = File {
+                package: "".to_string(),
+                classes: vec![],
+            };
+
             let file_path = entry.path();
             let content = fs::read_to_string(file_path).unwrap();
 
@@ -55,18 +60,25 @@ impl KotlinParser {
             for match_ in matches {
                 for capture in match_.captures {
                     let capture_name = query.capture_names()[capture.index as usize];
+                    let captured_el = &content[capture.node.byte_range()];
                     match capture_name {
                         "package_name" => {
-                            let captured_text = &content[capture.node.byte_range()];
-                            files.push(File {
-                                package: captured_text.to_string(),
-                                classes: vec![],
+                            file.package = captured_el.to_string();
+                        }
+                        "class_name" => {
+                            file.classes.push(Class {
+                                fields: vec![],
+                                name: format!("{}.{}", file.package, captured_el.to_string()),
                             });
                         }
-                        _ => {}
+                        _ => {
+                            println!("Found unhandled capture name: {}", capture_name)
+                        }
                     }
                 }
             }
+
+            files.push(file);
         }
 
         Ok(KotlinParser { files })
@@ -83,6 +95,14 @@ mod tests {
     fn test_new_kotlin_parser() {
         let test_files_dir = PathBuf::from("test-files");
         let parser = KotlinParser::new(&test_files_dir).unwrap();
+        let package_name = "com.example.app";
         assert_eq!(parser.files.len(), 1);
+        assert_eq!(parser.files[0].package, package_name);
+
+        assert_eq!(parser.files[0].classes.len(), 1);
+        assert_eq!(
+            parser.files[0].classes[0].name,
+            format!("{}.{}", package_name, "TestDataClass")
+        );
     }
 }
