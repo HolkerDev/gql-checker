@@ -77,7 +77,7 @@ impl SchemaParser {
         let mut found_schema_files = false;
 
         for entry in WalkDir::new(&schema_dir).into_iter().filter_map(|e| e.ok()) {
-            if entry.path().is_file().not() {
+            if !entry.path().is_file() || !entry.path().to_string_lossy().ends_with(".graphqls") {
                 continue;
             }
 
