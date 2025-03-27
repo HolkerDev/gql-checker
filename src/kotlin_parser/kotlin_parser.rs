@@ -5,6 +5,8 @@ use tree_sitter::{Parser as TreeSitterParser, Query, QueryCursor};
 use tree_sitter_kotlin::language;
 use walkdir::WalkDir;
 
+use super::queries::package_query;
+
 struct KotlinParser {
     files: Vec<File>,
 }
@@ -30,13 +32,6 @@ impl KotlinParser {
         let mut parser = TreeSitterParser::new();
         parser.set_language(&language())?;
 
-        // Simple query to find function declarations
-        let query_string = r#"
-            (package_header
-                (identifier) @package_name)
-        "#;
-        let query = Query::new(&language(), query_string)?;
-
         for entry in WalkDir::new(source_dir).into_iter() {
             let entry = match entry {
                 Ok(e) => e,
@@ -47,7 +42,6 @@ impl KotlinParser {
             };
 
             if !entry.path().extension().map_or(false, |ext| ext == "kt") {
-                println!("Skipping: not a .kt file");
                 continue;
             }
 
@@ -55,17 +49,22 @@ impl KotlinParser {
             let content = fs::read_to_string(file_path).unwrap();
 
             let tree = parser.parse(&content, None).unwrap();
-
+            let query = package_query()?;
             let mut query_cursor = QueryCursor::new();
             let matches = query_cursor.matches(&query, tree.root_node(), content.as_bytes());
             for match_ in matches {
                 for capture in match_.captures {
-                    let captured_text = &content[capture.node.byte_range()];
-                    files.push(File {
-                        package: captured_text.to_string(),
-                        classes: vec![],
-                    });
-                    println!("Package name: {}", captured_text);
+                    let capture_name = query.capture_names()[capture.index as usize];
+                    match capture_name {
+                        "package_name" => {
+                            let captured_text = &content[capture.node.byte_range()];
+                            files.push(File {
+                                package: captured_text.to_string(),
+                                classes: vec![],
+                            });
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
