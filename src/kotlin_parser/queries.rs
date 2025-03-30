@@ -9,6 +9,9 @@ pub fn package_query() -> Result<Query, QueryError> {
     )
     (class_declaration
         (type_identifier) @class_name
+        (primary_constructor
+            (class_parameter) @field_type
+        )
     ) 
         "#;
     Query::new(&language(), query_string)
