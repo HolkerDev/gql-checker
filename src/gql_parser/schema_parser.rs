@@ -157,6 +157,10 @@ impl SchemaParser {
                     _ => return None,
                 };
 
+                if obj.name == QUERY_NAME {
+                    return None;
+                }
+
                 Some((&obj.name, &obj.fields))
             })
             .for_each(|(type_name, fields)| {
@@ -250,5 +254,6 @@ mod tests {
         let parser = SchemaParser::new(PathBuf::from("test-files")).unwrap();
 
         assert!(parser.types.contains_key("Employee"));
+        assert!(!parser.types.contains_key("Query"));
     }
 }
