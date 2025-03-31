@@ -75,13 +75,12 @@ impl KotlinParser {
                     let captured_el = &content[capture.node.byte_range()];
                     match capture_name {
                         "package_name" => {
-                            println!("Found package: {}", captured_el);
                             file.package = captured_el.to_string();
                         }
                         "class_name" => {
-                            println!("Found class: {}", captured_el);
                             let class_name =
                                 format!("{}.{}", file.package, captured_el.to_string());
+                            // Skip class if it was added
                             if class_map.contains_key(&class_name) {
                                 continue;
                             }
@@ -110,8 +109,6 @@ impl KotlinParser {
                                     field_type: field_type.to_string(),
                                 });
                             }
-
-                            println!("Field name: {}, field type: {}", field_name, field_type)
                         }
                         _ => {
                             println!("Found unhandled capture name: {}", capture_name)
@@ -140,8 +137,6 @@ mod tests {
         let package_name = "com.example.app";
         assert_eq!(parser.files.len(), 1);
         assert_eq!(parser.files[0].package, package_name);
-
-        println!("{:?}", parser.class_map);
 
         assert_eq!(parser.class_map.len(), 1);
         assert_eq!(

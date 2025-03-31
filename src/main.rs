@@ -1,3 +1,6 @@
+mod gql_parser;
+mod kotlin_parser;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -6,14 +9,11 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::*;
+use gql_parser::SchemaParser;
 use regex::Regex;
-use schema_parser::SchemaParser;
 use tree_sitter::{Parser as TreeSitterParser, Query, QueryCursor};
 use tree_sitter_kotlin::language;
 use walkdir::WalkDir;
-
-mod kotlin_parser;
-mod schema_parser;
 
 #[derive(Parser)]
 struct CliParams {

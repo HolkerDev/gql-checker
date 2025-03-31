@@ -1,9 +1,8 @@
-use anyhow::{Context, Result};
 use graphql_parser::{
     parse_schema,
     schema::{Definition, Document, TypeDefinition},
 };
-use std::{ops::Not, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 use walkdir::WalkDir;
 
 /// Custom error types for schema parsing operations
@@ -22,11 +21,14 @@ pub enum SchemaParserError {
 /// The name of the root Query type in GraphQL schema
 const QUERY_NAME: &str = "Query";
 
+type TypeName = String;
+
 /// A parser for GraphQL schema files that extracts queries and custom scalars
 #[derive(Debug)]
 pub struct SchemaParser {
     queries: Vec<Query>,
     custom_scalars: Vec<String>,
+    types: HashMap<TypeName, GqlType>,
 }
 
 /// Represents a GraphQL query with its name and arguments
@@ -47,6 +49,11 @@ pub struct Argument {
     pub value_type: String,
     /// Whether the argument can be null
     pub is_nullable: bool,
+}
+
+#[derive(Debug)]
+struct GqlType {
+    name: String,
 }
 
 impl SchemaParser {
@@ -74,6 +81,7 @@ impl SchemaParser {
 
         let mut custom_scalars: Vec<String> = Vec::new();
         let mut schema_queries: Vec<Query> = Vec::new();
+        let mut gql_types: HashMap<TypeName, GqlType> = HashMap::new();
         let mut found_schema_files = false;
 
         for entry in WalkDir::new(&schema_dir).into_iter().filter_map(|e| e.ok()) {
@@ -90,6 +98,7 @@ impl SchemaParser {
 
             custom_scalars.extend(Self::extract_custom_scalars(&schema));
             schema_queries.extend(Self::extract_queries(&schema));
+            gql_types.extend(Self::extract_types(&schema));
         }
 
         if !found_schema_files {
@@ -109,6 +118,7 @@ impl SchemaParser {
         Ok(Self {
             queries: schema_queries,
             custom_scalars,
+            types: gql_types,
         })
     }
 
@@ -134,6 +144,28 @@ impl SchemaParser {
                 }
             })
             .collect()
+    }
+
+    fn extract_types(schema: &Document<String>) -> HashMap<TypeName, GqlType> {
+        let mut map = HashMap::new();
+        schema
+            .definitions
+            .iter()
+            .filter_map(|def| {
+                let obj = match def {
+                    Definition::TypeDefinition(TypeDefinition::Object(obj)) => obj,
+                    _ => return None,
+                };
+
+                Some((&obj.name, &obj.fields))
+            })
+            .for_each(|(type_name, fields)| {
+                let gql_type = GqlType {
+                    name: type_name.to_string(),
+                };
+                map.insert(type_name.to_string(), gql_type);
+            });
+        map
     }
 
     fn extract_queries(schema: &Document<String>) -> Vec<Query> {
@@ -211,5 +243,12 @@ mod tests {
         assert_eq!(queries[1].arguments[1].name, "age");
         assert_eq!(queries[1].arguments[1].value_type, "Int");
         assert_eq!(queries[1].arguments[1].is_nullable, true);
+    }
+
+    #[test]
+    fn test_finds_all_types() {
+        let parser = SchemaParser::new(PathBuf::from("test-files")).unwrap();
+
+        assert!(parser.types.contains_key("Employee"));
     }
 }
